@@ -15,4 +15,14 @@
  */
 import { Handler, StreamifyHandler } from 'aws-lambda';
 
-export type LambdaModule = Record<string, Handler | StreamifyHandler>;
+// CommonJS module structure
+export type LambdaModuleCJS = Record<string, Handler | StreamifyHandler>;
+
+// ESM module structure
+export interface LambdaModuleESM {
+  [Symbol.toStringTag]: 'Module';
+  default: LambdaModuleCJS;
+}
+
+// Union type to support both CommonJS and ESM modules
+export type LambdaModule = LambdaModuleCJS | LambdaModuleESM;

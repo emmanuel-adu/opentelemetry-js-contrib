@@ -54,7 +54,11 @@ import {
 import { AwsLambdaInstrumentationConfig, EventContextExtractor } from './types';
 /** @knipignore */
 import { PACKAGE_NAME, PACKAGE_VERSION } from './version';
-import { LambdaModule } from './internal-types';
+import {
+  LambdaModule,
+  LambdaModuleCJS,
+  LambdaModuleESM,
+} from './internal-types';
 
 const headerGetter: TextMapGetter<APIGatewayProxyEventHeaders> = {
   keys(carrier): string[] {
@@ -70,6 +74,33 @@ export const AWS_HANDLER_STREAMING_SYMBOL = Symbol.for(
   'aws.lambda.runtime.handler.streaming'
 );
 export const AWS_HANDLER_STREAMING_RESPONSE = 'response';
+
+function extractModuleExports(moduleExports: LambdaModule): {
+  exports: LambdaModuleCJS;
+  isESM: boolean;
+} {
+  // Check if this is an ESM module by looking for the Module symbol
+  const isESM =
+    (moduleExports as LambdaModuleESM)[Symbol.toStringTag] === 'Module';
+
+  if (isESM) {
+    diag.debug(
+      'AWS Lambda instrumentation: ESM module detected, extracting from module.default'
+    );
+    const extracted = (moduleExports as LambdaModuleESM).default;
+    diag.debug('AWS Lambda instrumentation: ESM exports extracted', {
+      exportedFunctions: Object.keys(extracted).filter(
+        k => typeof extracted[k] === 'function'
+      ),
+    });
+    return { exports: extracted, isESM: true };
+  } else {
+    diag.debug(
+      'AWS Lambda instrumentation: CommonJS module detected, using module exports directly'
+    );
+    return { exports: moduleExports as LambdaModuleCJS, isESM: false };
+  }
+}
 
 export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstrumentationConfig> {
   private declare _traceForceFlusher?: () => Promise<void>;
@@ -102,22 +133,27 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
 
     // Lambda loads user function using an absolute path.
     let filename = path.resolve(taskRoot, moduleRoot, module);
+    let detectedExtension = '';
+
     if (!filename.endsWith('.js')) {
       // It's impossible to know in advance if the user has a js, mjs or cjs file.
       // Check that the .js file exists otherwise fallback to the next known possibilities (.mjs, .cjs).
       try {
         fs.statSync(`${filename}.js`);
         filename += '.js';
+        detectedExtension = '.js';
       } catch (e) {
         try {
           fs.statSync(`${filename}.mjs`);
           // fallback to .mjs (ESM)
           filename += '.mjs';
+          detectedExtension = '.mjs';
         } catch (e2) {
           try {
             fs.statSync(`${filename}.cjs`);
             // fallback to .cjs (CommonJS)
             filename += '.cjs';
+            detectedExtension = '.cjs';
           } catch (e3) {
             this._diag.warn(
               'No handler file was able to resolved with one of the known extensions for the file',
@@ -126,6 +162,18 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
           }
         }
       }
+    } else {
+      detectedExtension = '.js';
+    }
+
+    if (detectedExtension) {
+      diag.info('AWS Lambda instrumentation: Handler file detected', {
+        filename,
+        extension: detectedExtension,
+        module,
+        functionName,
+        note: 'Actual module type (ESM/CommonJS) will be detected at runtime',
+      });
     }
 
     diag.debug('Instrumenting lambda handler', {
@@ -154,20 +202,75 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
           new InstrumentationNodeModuleFile(
             module,
             ['*'],
+            // Patch function - wraps the original handler function with the tracing and metrics instrumentation
             (moduleExports: LambdaModule) => {
-              if (isWrapped(moduleExports[functionName])) {
-                this._unwrap(moduleExports, functionName);
+              diag.debug('AWS Lambda instrumentation: Patching handler', {
+                functionName,
+              });
+
+              // Extract the actual exports (handles both ESM and CommonJS)
+              const { exports: actualExports, isESM } =
+                extractModuleExports(moduleExports);
+
+              if (isWrapped(actualExports[functionName])) {
+                diag.debug(
+                  'AWS Lambda instrumentation: Handler already wrapped, unwrapping first'
+                );
+                this._unwrap(actualExports, functionName);
               }
+
+              if (!actualExports[functionName]) {
+                diag.warn(
+                  'AWS Lambda instrumentation: Handler function not found',
+                  {
+                    functionName,
+                    availableFunctions: Object.keys(actualExports).filter(
+                      k => typeof actualExports[k] === 'function'
+                    ),
+                  }
+                );
+              } else {
+                diag.debug(
+                  'AWS Lambda instrumentation: Wrapping handler function',
+                  { functionName, isESM }
+                );
+              }
+
               this._wrap(
-                moduleExports,
+                actualExports, // the module containing the function to instrument
                 functionName,
                 this._getHandler(lambdaStartTime)
               );
+
+              // For ESM modules, ensure the default export is updated with the wrapped function
+              if (isESM) {
+                (moduleExports as LambdaModuleESM).default = actualExports;
+              }
+
+              diag.info(
+                'AWS Lambda instrumentation: Handler successfully patched',
+                { functionName, isESM }
+              );
               return moduleExports;
             },
+            // Unpatch function - unwraps the original handler function from the patched handler function
             (moduleExports?: LambdaModule) => {
               if (moduleExports == null) return;
-              this._unwrap(moduleExports, functionName);
+              diag.debug('AWS Lambda instrumentation: Unpatching handler', {
+                functionName,
+              });
+              const { exports: actualExports, isESM } =
+                extractModuleExports(moduleExports);
+              this._unwrap(actualExports, functionName);
+
+              // For ESM modules, ensure the default export is updated
+              if (isESM) {
+                (moduleExports as LambdaModuleESM).default = actualExports;
+              }
+
+              diag.debug('AWS Lambda instrumentation: Handler unpatched', {
+                functionName,
+              });
             }
           ),
         ]
@@ -280,9 +383,23 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
       context: Context,
       callback: Callback
     ) {
+      diag.debug('AWS Lambda instrumentation: Patched handler invoked', {
+        functionName: context.functionName,
+        requestId: context.awsRequestId,
+      });
+
+      // 1. Determine if the request is a cold start or just a regular request
       _onRequest();
 
+      // 2. Determine the parent span context
       const parent = plugin._determineParent(event, context);
+
+      // 3. Create a new span for the request and update the span with the request attributes
+      diag.debug('AWS Lambda instrumentation: Creating span', {
+        functionName: context.functionName,
+        requestId: context.awsRequestId,
+        coldStart: requestIsColdStart,
+      });
 
       const span = plugin._createSpanForRequest(
         event,
@@ -291,6 +408,13 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
         parent
       );
 
+      diag.debug('AWS Lambda instrumentation: Span created', {
+        traceId: span.spanContext().traceId,
+        spanId: span.spanContext().spanId,
+        coldStart: requestIsColdStart,
+      });
+
+      // 4. Apply the request hook if configured
       plugin._applyRequestHook(span, event, context);
 
       return otelContext.with(trace.setSpan(parent, span), () => {
@@ -298,7 +422,11 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
         // the handler and see if the result is a Promise or not. In such a case, the callback is usually ignored. If
         // the handler happened to both call the callback and complete a returned Promise, whichever happens first will
         // win and the latter will be ignored.
+
+        // 5. Wrap the callback with tracing and metrics instrumentation
         const wrappedCallback = plugin._wrapCallback(callback, span);
+
+        // 6. Handle the promise result - supports both callback and promise-based handlers
         const maybePromise = safeExecuteInTheMiddle(
           () => original.apply(this, [event, context, wrappedCallback]),
           error => {

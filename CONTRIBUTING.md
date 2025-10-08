@@ -111,12 +111,12 @@ The `opentelemetry-js-contrib` project is written in TypeScript.
 As a general rule, installing from the root directory should always be done first before anything else.
 Packages within this repository might have dependencies between them. This means the dependencies should
 be built before if you want to `compile` or `test` the changes you've made in a package. Each package
-has a script to ensure these dependecies are ready.
+has a script to ensure these dependencies are ready.
 
-The required steps to start development on a pacakge are:
+The required steps to start development on a package are:
 
 - `npm ci` from root folder to install dependencies ([see npm-ci docs](https://docs.npmjs.com/cli/v10/commands/npm-ci))
-- `cd` into the pacakge you want to apply changes.
+- `cd` into the package you want to apply changes.
 - `npm run compile:with-dependencies` compiles the TypeScript files for this package and its dependencies within the repository.
 
 Then you can proceed to do apply the changes and use the scripts below for development workflow
@@ -151,11 +151,11 @@ npm run test:with-services-env # runs 'npm test' with envvars from test/test-ser
 npm run test-services:stop     # stops services in Docker
 ```
 
-If you only want to test a single package that dfepends on a service (e.g. the `instrumentation-mongodb`) you can `cd` into it and
+If you only want to test a single package that depends on a service (e.g. the `instrumentation-mongodb`) you can `cd` into it and
 use the same scripts for testing. In this case the script will only start the services needed to test the package.
 
 ```sh
-cd packages/instrumentation-mongodb # get into the instrumenation folder
+cd packages/instrumentation-mongodb # get into the instrumentation folder
 npm run test-services:start         # start the MongoDB service in Docker
 npm run test:with-services-env      # runs 'npm test' with envvars from test/test-services.env
 npm run test-services:stop          # stop MongoDB service in Docker
