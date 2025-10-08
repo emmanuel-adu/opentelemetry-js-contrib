@@ -186,6 +186,16 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
       functionName,
     });
 
+    diag.debug(
+      'AWS Lambda instrumentation: About to create instrumentation definition',
+      {
+        filename,
+        module,
+        functionName,
+        note: 'This should be followed by patching function execution when module loads',
+      }
+    );
+
     const lambdaStartTime =
       this.getConfig().lambdaStartTime ||
       Date.now() - Math.floor(1000 * process.uptime());
@@ -202,58 +212,88 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
           new InstrumentationNodeModuleFile(
             module,
             ['*'],
-            // Patch function - wraps the original handler function with the tracing and metrics instrumentation
+            //! Patch function - wraps the original handler function with the tracing and metrics instrumentation
             (moduleExports: LambdaModule) => {
-              diag.debug('AWS Lambda instrumentation: Patching handler', {
-                functionName,
-              });
-
-              // Extract the actual exports (handles both ESM and CommonJS)
-              const { exports: actualExports, isESM } =
-                extractModuleExports(moduleExports);
-
-              if (isWrapped(actualExports[functionName])) {
+              try {
                 diag.debug(
-                  'AWS Lambda instrumentation: Handler already wrapped, unwrapping first'
-                );
-                this._unwrap(actualExports, functionName);
-              }
-
-              if (!actualExports[functionName]) {
-                diag.warn(
-                  'AWS Lambda instrumentation: Handler function not found',
+                  'AWS Lambda instrumentation: Patching handler - ENTRY POINT REACHED',
                   {
                     functionName,
-                    availableFunctions: Object.keys(actualExports).filter(
-                      k => typeof actualExports[k] === 'function'
-                    ),
+                    moduleExportsType: typeof moduleExports,
+                    moduleExportsKeys: Object.keys(moduleExports || {}),
+                    moduleExportsHasDefault: 'default' in (moduleExports || {}),
                   }
                 );
-              } else {
+
+                // Extract the actual exports (handles both ESM and CommonJS)
+                const { exports: actualExports, isESM } =
+                  extractModuleExports(moduleExports);
+
                 diag.debug(
-                  'AWS Lambda instrumentation: Wrapping handler function',
+                  'AWS Lambda instrumentation: Module exports extracted',
+                  {
+                    functionName,
+                    isESM,
+                    actualExportsKeys: Object.keys(actualExports || {}),
+                    handlerExists: functionName in (actualExports || {}),
+                    handlerType: typeof actualExports[functionName],
+                  }
+                );
+
+                if (isWrapped(actualExports[functionName])) {
+                  diag.debug(
+                    'AWS Lambda instrumentation: Handler already wrapped, unwrapping first'
+                  );
+                  this._unwrap(actualExports, functionName);
+                }
+
+                if (!actualExports[functionName]) {
+                  diag.warn(
+                    'AWS Lambda instrumentation: Handler function not found',
+                    {
+                      functionName,
+                      availableFunctions: Object.keys(actualExports).filter(
+                        k => typeof actualExports[k] === 'function'
+                      ),
+                    }
+                  );
+                } else {
+                  diag.debug(
+                    'AWS Lambda instrumentation: Wrapping handler function',
+                    { functionName, isESM }
+                  );
+                }
+
+                this._wrap(
+                  actualExports, // the module containing the function to instrument
+                  functionName,
+                  this._getHandler(lambdaStartTime)
+                );
+
+                // For ESM modules, ensure the default export is updated with the wrapped function
+                if (isESM) {
+                  (moduleExports as LambdaModuleESM).default = actualExports;
+                }
+
+                diag.info(
+                  'AWS Lambda instrumentation: Handler successfully patched',
                   { functionName, isESM }
                 );
+                return moduleExports;
+              } catch (error) {
+                diag.error(
+                  'AWS Lambda instrumentation: Error during patching',
+                  {
+                    functionName,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined,
+                  }
+                );
+                throw error;
               }
-
-              this._wrap(
-                actualExports, // the module containing the function to instrument
-                functionName,
-                this._getHandler(lambdaStartTime)
-              );
-
-              // For ESM modules, ensure the default export is updated with the wrapped function
-              if (isESM) {
-                (moduleExports as LambdaModuleESM).default = actualExports;
-              }
-
-              diag.info(
-                'AWS Lambda instrumentation: Handler successfully patched',
-                { functionName, isESM }
-              );
-              return moduleExports;
             },
-            // Unpatch function - unwraps the original handler function from the patched handler function
+            //! Unpatch function - unwraps the original handler function from the patched handler function
             (moduleExports?: LambdaModule) => {
               if (moduleExports == null) return;
               diag.debug('AWS Lambda instrumentation: Unpatching handler', {
