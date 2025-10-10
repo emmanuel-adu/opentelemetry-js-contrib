@@ -23,6 +23,15 @@ npm install --save @opentelemetry/instrumentation-aws-lambda
 
 - This package will instrument the lambda execution regardless of versions.
 
+## ESM Support
+
+This instrumentation supports **both CommonJS and ESM (ECMAScript Modules) Lambda handlers**:
+
+- **CommonJS (`.js`, `.cjs`)**: Automatic instrumentation via `require()` hooks ✅
+- **ESM (`.mjs`, `type: "module"`)**: Banner-based instrumentation ✅
+
+Both approaches provide **identical functionality**. For ESM handlers, you'll need to add a banner to your build configuration (e.g., in `serverless.yml` with esbuild). See [ESM_SUPPORT.md](./ESM_SUPPORT.md) for complete documentation and examples.
+
 ## Usage
 
 Create a file to initialize the instrumentation, such as `lambda-wrapper.js`.

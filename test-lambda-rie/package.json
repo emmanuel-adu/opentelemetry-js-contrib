@@ -3,6 +3,18 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Lambda RIE test with OpenTelemetry instrumentation",
+  "scripts": {
+    "test": "npm run test:full",
+    "test:full": "npm run build && npm run start && sleep 3 && npm run invoke && npm run stop",
+    "test:quick": "npm run invoke",
+    "build": "docker compose build",
+    "start": "docker compose up -d",
+    "stop": "docker compose down",
+    "logs": "docker compose logs -f lambda-rie",
+    "invoke": "curl -s -X POST http://localhost:9000/2015-03-31/functions/function/invocations -d @event.json | jq '.' && npm run check",
+    "check": "docker compose logs lambda-rie | grep -E '(REQUEST HOOK|RESPONSE HOOK|ESM handler successfully patched|spanId)' | tail -10 || echo '⚠️  No trace logs found yet. Try: npm run logs'",
+    "clean": "docker compose down -v && docker system prune -f"
+  },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/sdk-node": "^0.205.0",

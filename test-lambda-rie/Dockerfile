@@ -10,8 +10,8 @@ RUN cd ${LAMBDA_TASK_ROOT} && npm install
 # Copy the built instrumentation package (replaces the one from npm)
 COPY instrumentation-aws-lambda/ ${LAMBDA_TASK_ROOT}/node_modules/@opentelemetry/instrumentation-aws-lambda/
 
-# Copy the Lambda handler
-COPY handler.mjs ${LAMBDA_TASK_ROOT}/
+# Copy the Lambda handler with final banner implementation
+COPY handler-banner-final.mjs ${LAMBDA_TASK_ROOT}/handler.mjs
 
 # Copy OpenTelemetry initialization script
 COPY init-otel.cjs ${LAMBDA_TASK_ROOT}/

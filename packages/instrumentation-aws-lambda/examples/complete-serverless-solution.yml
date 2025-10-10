@@ -1,0 +1,48 @@
+# COMPLETE SERVERLESS SOLUTION WITH ESM AUTO-PATCH BANNER
+#
+# This shows exactly how to add ESM auto-patching to your existing serverless.yml
+# The banner automatically handles ESM Lambda handler instrumentation.
+
+service: your-service-name
+provider:
+  name: aws
+  deploymentMethod: direct
+  region: ${opt:region, 'us-east-1'}
+  runtime: nodejs20.x
+  timeout: 30
+  environment:
+    NODE_ENV: ${env:NODE_ENV}
+  logRetentionInDays: 14
+
+custom:
+  esbuild:
+    sourcemap: true
+    bundle: true
+    minify: false
+    exclude:
+      - pg-native
+    format: 'esm'
+    platform: 'node'
+    target: 'esnext'
+    outputFileExtension: '.mjs'
+
+    # 🎯 ADD THIS BANNER TO YOUR EXISTING esbuild CONFIGURATION
+    # This banner automatically patches ESM handlers with OpenTelemetry
+    banner:
+      js: |
+        import { createRequire } from 'module';
+        const require = createRequire(import.meta.url);
+        import { fileURLToPath as ssb_fileURLToPath } from 'url';
+        import { dirname as ssb_dirname } from 'path';
+        const _filename = ssb_fileURLToPath(import.meta.url);
+        const _dirname = ssb_dirname(_filename);
+
+        // 🎯 ESM AUTO-PATCH BANNER - Automatically patches handlers with OpenTelemetry
+        if (globalThis.__aws_lambda_esm_instrumentation) {
+          // Intercept the handler export
+          const originalHandler = handler;
+          const patchedHandler = globalThis.__aws_lambda_esm_instrumentation.patchESMHandler(originalHandler);
+
+          // Re-export the patched handler
+          export { patchedHandler as handler };
+        }

@@ -1,5 +1,9 @@
-// ESM Lambda handler for RIE testing
-// This handler will be instrumented by OpenTelemetry
+/**
+ * Zero-Modification ESM Lambda Handler
+ *
+ * This handler requires ZERO changes - the instrumentation automatically
+ * patches it without any modifications to the handler file.
+ */
 
 console.log('[handler] Loading ESM module');
 
@@ -22,7 +26,8 @@ export async function handler(event, context) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      message: 'Hello from ESM Lambda with OpenTelemetry!',
+      message:
+        'Hello from ESM Lambda with automatic OpenTelemetry instrumentation!',
       timestamp: new Date().toISOString(),
       requestId: context.awsRequestId,
       coldStart: !global.warmStart,
@@ -38,3 +43,5 @@ export async function handler(event, context) {
 
 console.log('[handler] ESM module loaded successfully');
 
+// That's it! No modifications needed.
+// The instrumentation automatically patches this handler when it's loaded.

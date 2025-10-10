@@ -60,6 +60,11 @@ import {
   LambdaModuleESM,
 } from './internal-types';
 
+// Global type declarations for ESM patching
+declare global {
+  var __aws_lambda_esm_instrumentation: AwsLambdaInstrumentation | undefined;
+}
+
 const headerGetter: TextMapGetter<APIGatewayProxyEventHeaders> = {
   keys(carrier): string[] {
     return Object.keys(carrier);
@@ -99,6 +104,7 @@ function extractModuleExports(moduleExports: LambdaModule): {
 export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstrumentationConfig> {
   private declare _traceForceFlusher?: () => Promise<void>;
   private declare _metricForceFlusher?: () => Promise<void>;
+  private _manualPatchRegistry = new Map<string, any>();
 
   constructor(config: AwsLambdaInstrumentationConfig = {}) {
     super(PACKAGE_NAME, PACKAGE_VERSION, config);
@@ -115,6 +121,11 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
         { taskRoot, handlerDef }
       );
       return [];
+    }
+
+    // Store instrumentation globally for ESM banner-based patching
+    if (typeof globalThis !== 'undefined') {
+      (globalThis as any).__aws_lambda_esm_instrumentation = this;
     }
 
     const handler = path.basename(handlerDef);
@@ -728,5 +739,52 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
       return extractedContext;
     }
     return ROOT_CONTEXT;
+  }
+
+  /**
+   * Manually patch an ESM Lambda handler for cases where automatic patching fails.
+   * This is needed because Lambda's ESM loading bypasses OpenTelemetry's CommonJS hooks.
+   *
+   * @param handler - The original ESM Lambda handler function
+   * @param handlerName - Name of the handler (defaults to 'handler')
+   * @returns The wrapped handler with OpenTelemetry instrumentation
+   */
+  public patchESMHandler(
+    handler: Handler | StreamifyHandler,
+    handlerName: string = 'handler'
+  ): Handler | StreamifyHandler {
+    const lambdaStartTime = Date.now();
+    const wrappedHandler = this._getHandler(lambdaStartTime)(handler);
+
+    // Store in registry for potential unwrapping
+    this._manualPatchRegistry.set(handlerName, {
+      original: handler,
+      wrapped: wrappedHandler,
+    });
+
+    this._diag.debug('ESM handler manually patched', {
+      handlerName,
+      hasRequestHook: !!this.getConfig().requestHook,
+      hasResponseHook: !!this.getConfig().responseHook,
+    });
+
+    return wrappedHandler;
+  }
+
+  /**
+   * Get the original handler from the manual patch registry
+   */
+  public getOriginalHandler(
+    handlerName: string = 'handler'
+  ): Handler | StreamifyHandler | undefined {
+    const entry = this._manualPatchRegistry.get(handlerName);
+    return entry?.original;
+  }
+
+  /**
+   * Remove manual patch from registry
+   */
+  public unpatchESMHandler(handlerName: string = 'handler'): boolean {
+    return this._manualPatchRegistry.delete(handlerName);
   }
 }

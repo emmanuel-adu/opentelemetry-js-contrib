@@ -1,0 +1,6 @@
+node_modules
+*.md
+*.sh
+test-enhanced.sh
+.git
+.gitignore
