@@ -1,0 +1,14 @@
+{
+  "httpMethod": "GET",
+  "path": "/test",
+  "headers": {
+    "Content-Type": "application/json",
+    "User-Agent": "Lambda-RIE-Test/1.0"
+  },
+  "queryStringParameters": {
+    "test": "true"
+  },
+  "body": null,
+  "isBase64Encoded": false
+}
+

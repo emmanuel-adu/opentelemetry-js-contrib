@@ -1,0 +1,15 @@
+#!/bin/bash
+# OpenTelemetry Lambda wrapper script
+# This runs before the Lambda handler loads
+
+echo "[otel-handler] Initializing OpenTelemetry instrumentation..." >&2
+
+# Set Node options to require the OTel initialization before the handler
+export NODE_OPTIONS="--require ${LAMBDA_TASK_ROOT}/init-otel.cjs ${NODE_OPTIONS}"
+
+echo "[otel-handler] NODE_OPTIONS: $NODE_OPTIONS" >&2
+echo "[otel-handler] _HANDLER: $_HANDLER" >&2
+
+# Execute the Lambda runtime
+exec "$@"
+

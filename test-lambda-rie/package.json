@@ -1,0 +1,14 @@
+{
+  "name": "lambda-rie-test",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda RIE test with OpenTelemetry instrumentation",
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-node": "^0.205.0",
+    "@opentelemetry/context-async-hooks": "^2.1.0",
+    "@opentelemetry/sdk-trace-base": "^1.28.0",
+    "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0"
+  }
+}
