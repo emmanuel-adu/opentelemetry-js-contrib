@@ -45,24 +45,8 @@ custom:
           globalThis.__filename = _filename;
         }
 
-        // ESM Auto-Patch Banner - Provides helper function for manual patching
-        // Since ESM exports are immutable, we provide a patcher function you can use
+        // ESM Auto-Patch Banner - Enables automatic handler patching
         if (globalThis.__aws_lambda_esm_instrumentation) {
-          console.log('🔧 OpenTelemetry instrumentation detected, setting up ESM patching helper...');
-
-          // Create a global patcher function that can be called in your handler file
-          globalThis.__patchESMHandler = (handlerFunction, handlerName = 'handler') => {
-            if (typeof handlerFunction === 'function') {
-              try {
-                const patchedHandler = globalThis.__aws_lambda_esm_instrumentation.patchESMHandler(handlerFunction, handlerName);
-                console.log('✅ ESM handler patched with OpenTelemetry');
-                return patchedHandler;
-              } catch (error) {
-                console.error('❌ Failed to patch ESM handler:', error.message);
-                return handlerFunction; // Return original if patching fails
-              }
-            }
-            console.warn('⚠️ Handler is not a function, skipping OpenTelemetry patching');
-            return handlerFunction;
-          };
+          console.log('🔧 OpenTelemetry ESM auto-patching enabled');
+          // The instrumentation will handle all the complex logic automatically
         }
