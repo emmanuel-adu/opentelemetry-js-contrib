@@ -34,15 +34,35 @@ custom:
         const require = createRequire(import.meta.url);
         import { fileURLToPath as ssb_fileURLToPath } from 'url';
         import { dirname as ssb_dirname } from 'path';
+
+        // Define CommonJS globals for ESM compatibility
         const _filename = ssb_fileURLToPath(import.meta.url);
         const _dirname = ssb_dirname(_filename);
 
-        // 🎯 ESM AUTO-PATCH BANNER - Automatically patches handlers with OpenTelemetry
-        if (globalThis.__aws_lambda_esm_instrumentation) {
-          // Intercept the handler export
-          const originalHandler = handler;
-          const patchedHandler = globalThis.__aws_lambda_esm_instrumentation.patchESMHandler(originalHandler);
+        // Make __dirname and __filename available globally for packages that expect them
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__dirname = _dirname;
+          globalThis.__filename = _filename;
+        }
 
-          // Re-export the patched handler
-          export { patchedHandler as handler };
+        // ESM Auto-Patch Banner - Provides helper function for manual patching
+        // Since ESM exports are immutable, we provide a patcher function you can use
+        if (globalThis.__aws_lambda_esm_instrumentation) {
+          console.log('🔧 OpenTelemetry instrumentation detected, setting up ESM patching helper...');
+
+          // Create a global patcher function that can be called in your handler file
+          globalThis.__patchESMHandler = (handlerFunction, handlerName = 'handler') => {
+            if (typeof handlerFunction === 'function') {
+              try {
+                const patchedHandler = globalThis.__aws_lambda_esm_instrumentation.patchESMHandler(handlerFunction, handlerName);
+                console.log('✅ ESM handler patched with OpenTelemetry');
+                return patchedHandler;
+              } catch (error) {
+                console.error('❌ Failed to patch ESM handler:', error.message);
+                return handlerFunction; // Return original if patching fails
+              }
+            }
+            console.warn('⚠️ Handler is not a function, skipping OpenTelemetry patching');
+            return handlerFunction;
+          };
         }

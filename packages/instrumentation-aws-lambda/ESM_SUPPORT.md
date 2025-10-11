@@ -54,39 +54,58 @@ custom:
         const require = createRequire(import.meta.url);
         import { fileURLToPath as ssb_fileURLToPath } from 'url';
         import { dirname as ssb_dirname } from 'path';
+
+        // Define CommonJS globals for ESM compatibility
         const _filename = ssb_fileURLToPath(import.meta.url);
         const _dirname = ssb_dirname(_filename);
 
-        // ESM Auto-Patch Banner - Automatically patches handlers with OpenTelemetry
-        let finalHandler = handler;
-
-        if (globalThis.__aws_lambda_esm_instrumentation) {
-          try {
-            const patchedHandler = globalThis.__aws_lambda_esm_instrumentation.patchESMHandler(handler);
-            finalHandler = patchedHandler;
-            console.log('✅ ESM handler patched with OpenTelemetry');
-          } catch (error) {
-            console.error('❌ Failed to patch ESM handler:', error.message);
-          }
+        // Make __dirname and __filename available globally for packages that expect them
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__dirname = _dirname;
+          globalThis.__filename = _filename;
         }
 
-        export { finalHandler as handler };
+        // ESM Auto-Patch Banner - Automatically patches handlers with OpenTelemetry
+        // Defer patching until after module is fully loaded
+        if (globalThis.__aws_lambda_esm_instrumentation) {
+          // Use setImmediate to defer patching until after the module loads
+          setImmediate(() => {
+            if (typeof handler === 'function') {
+              try {
+                const originalHandler = handler;
+                const patchedHandler = globalThis.__aws_lambda_esm_instrumentation.patchESMHandler(originalHandler);
+                // Replace the handler variable with the patched version
+                handler = patchedHandler;
+                console.log('✅ ESM handler patched with OpenTelemetry');
+              } catch (error) {
+                console.error('❌ Failed to patch ESM handler:', error.message);
+              }
+            } else {
+              console.warn('⚠️ Handler is still not a function after module load, skipping OpenTelemetry patching');
+            }
+          });
+        }
 ```
 
-### 3. Your ESM Handler (No Changes Required)
+### 3. Your ESM Handler (Minimal Change Required)
 
 ```javascript
-// handler.mjs - NO MODIFICATIONS NEEDED!
-export async function handler(event, context) {
+// handler.mjs
+async function originalHandler(event, context) {
   // Your business logic
   return {
     statusCode: 200,
     body: JSON.stringify({ message: 'Success' }),
   };
 }
+
+// Export the handler (patched if instrumentation is available)
+export const handler = globalThis.__patchESMHandler
+  ? globalThis.__patchESMHandler(originalHandler)
+  : originalHandler;
 ```
 
-That's it! Your ESM handler will now be automatically instrumented with OpenTelemetry.
+**That's it!** Your ESM handler will now be automatically instrumented with OpenTelemetry.
 
 ---
 
