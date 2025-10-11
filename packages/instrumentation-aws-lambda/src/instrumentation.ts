@@ -126,6 +126,9 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
     // Store instrumentation globally for ESM banner-based patching
     if (typeof globalThis !== 'undefined') {
       (globalThis as any).__aws_lambda_esm_instrumentation = this;
+
+      // Set up automatic ESM patching if enabled
+      this._setupAutomaticESMPatching();
     }
 
     const handler = path.basename(handlerDef);
@@ -786,5 +789,88 @@ export class AwsLambdaInstrumentation extends InstrumentationBase<AwsLambdaInstr
    */
   public unpatchESMHandler(handlerName: string = 'handler'): boolean {
     return this._manualPatchRegistry.delete(handlerName);
+  }
+
+  /**
+   * Sets up automatic ESM handler patching
+   * This method intercepts module exports to automatically patch handlers
+   */
+  private _setupAutomaticESMPatching(): void {
+    // Use a timeout to ensure this runs after module loading
+    setTimeout(() => {
+      if (typeof module !== 'undefined' && module.exports) {
+        this._patchAllExistingExports();
+        this._setupExportInterceptor();
+      }
+    }, 0);
+  }
+
+  /**
+   * Patches ALL existing exported functions (regardless of name)
+   */
+  private _patchAllExistingExports(): void {
+    if (typeof module === 'undefined' || !module.exports) return;
+
+    // Get all properties from module.exports
+    const exportKeys = Object.keys(module.exports);
+
+    for (const exportName of exportKeys) {
+      const exportValue = module.exports[exportName];
+      if (typeof exportValue === 'function') {
+        this._diag.debug('Auto-patching existing function export', {
+          exportName,
+        });
+        try {
+          module.exports[exportName] = this.patchESMHandler(
+            exportValue,
+            exportName
+          );
+          console.log(
+            `✅ Auto-patched existing function export: ${exportName}`
+          );
+        } catch (error) {
+          this._diag.error('Failed to auto-patch existing function export', {
+            exportName,
+            error,
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Sets up a Proxy to intercept future exports
+   */
+  private _setupExportInterceptor(): void {
+    if (typeof module === 'undefined' || !module.exports) return;
+
+    const originalExports = { ...module.exports };
+
+    module.exports = new Proxy(originalExports, {
+      set: (target, property, value) => {
+        // If setting a function export, auto-patch it
+        if (typeof value === 'function') {
+          const handlerName = String(property);
+          this._diag.debug('Intercepted function export', { handlerName });
+
+          try {
+            const patchedHandler = this.patchESMHandler(value, handlerName);
+            target[property] = patchedHandler;
+            console.log(`✅ Auto-patched new handler export: ${handlerName}`);
+            return true;
+          } catch (error) {
+            this._diag.error('Failed to auto-patch new handler export', {
+              handlerName,
+              error,
+            });
+            target[property] = value;
+            return true;
+          }
+        }
+
+        target[property] = value;
+        return true;
+      },
+    });
   }
 }
