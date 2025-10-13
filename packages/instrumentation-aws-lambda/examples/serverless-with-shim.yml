@@ -1,0 +1,63 @@
+# ZERO-MODIFICATION SOLUTION: CJS Shim Wrapper Approach
+#
+# This approach requires NO changes to your ESM handler files!
+# The shim wrapper intercepts and patches your handlers automatically.
+
+service: your-service-name
+
+provider:
+  name: aws
+  deploymentMethod: direct
+  region: ${opt:region, 'us-east-1'}
+  runtime: nodejs20.x
+  timeout: 30
+  environment:
+    NODE_ENV: ${env:NODE_ENV}
+  logRetentionInDays: 14
+
+custom:
+  esbuild:
+    sourcemap: true
+    bundle: true
+    minify: false
+    exclude:
+      - pg-native
+    format: 'esm'
+    platform: 'node'
+    target: 'esnext'
+    outputFileExtension: '.mjs'
+
+    # No banner needed! The shim handles everything.
+
+functions:
+  # Instead of pointing directly to your handler:
+  #   handler: lambda.handler
+  # Point to the shim wrapper:
+
+  myFunction:
+    handler: shim/wrapper.handler # Points to the CJS shim
+    environment:
+      ACTUAL_HANDLER: lambda.handler # Tell the shim where your real handler is
+
+    # Your lambda.ts/lambda.mjs file remains completely unchanged!
+    # No exports modification, no patching code, nothing!
+
+# You need to include the shim wrapper in your package
+package:
+  patterns:
+    - '!./**'
+    - 'shim/wrapper.cjs' # Include the shim
+    - 'lambda.mjs' # Your original handler (built by esbuild)
+
+# BENEFITS:
+# ✅ Zero modifications to your handler files
+# ✅ Works with any ESM handler
+# ✅ Automatic OpenTelemetry patching
+# ✅ Graceful fallback if OTel not available
+# ✅ Easy to enable/disable by changing handler path
+
+# LIMITATIONS:
+# ⚠️  Adds one extra function call (minimal overhead)
+# ⚠️  Need to set ACTUAL_HANDLER env var for each function
+# ⚠️  Requires including the shim file in deployment
+

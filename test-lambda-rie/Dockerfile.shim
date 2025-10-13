@@ -1,0 +1,40 @@
+# Lambda Runtime Interface Emulator Test with CJS Shim Wrapper
+# This validates the ZERO-MODIFICATION approach using a CJS shim
+
+FROM public.ecr.aws/lambda/nodejs:20
+
+# Copy package.json and install dependencies FIRST
+COPY package.json ${LAMBDA_TASK_ROOT}/
+RUN cd ${LAMBDA_TASK_ROOT} && npm install
+
+# Copy the built instrumentation package (replaces the one from npm)
+COPY instrumentation-aws-lambda/ ${LAMBDA_TASK_ROOT}/node_modules/@opentelemetry/instrumentation-aws-lambda/
+
+# Copy the PURE ESM handler (NO MODIFICATIONS!)
+COPY handler-pure-esm.mjs ${LAMBDA_TASK_ROOT}/
+
+# Copy the CJS shim wrapper
+COPY shim-wrapper.cjs ${LAMBDA_TASK_ROOT}/
+
+# Copy OpenTelemetry initialization script
+COPY init-otel.cjs ${LAMBDA_TASK_ROOT}/
+
+# Copy the exec wrapper script
+COPY otel-handler ${LAMBDA_TASK_ROOT}/
+RUN chmod +x ${LAMBDA_TASK_ROOT}/otel-handler
+
+# Set Lambda environment variables
+ENV _HANDLER=shim-wrapper.handler
+ENV ACTUAL_HANDLER=handler-pure-esm.handler
+ENV AWS_LAMBDA_FUNCTION_NAME=test-esm-function-shim
+ENV AWS_LAMBDA_FUNCTION_VERSION=1
+ENV AWS_LAMBDA_FUNCTION_MEMORY_SIZE=128
+ENV LAMBDA_TASK_ROOT=/var/task
+ENV OTEL_DEBUG_ENABLED=true
+
+# Use AWS_LAMBDA_EXEC_WRAPPER to run our OTel initialization script
+ENV AWS_LAMBDA_EXEC_WRAPPER=${LAMBDA_TASK_ROOT}/otel-handler
+
+# Set the handler to the shim
+CMD [ "shim-wrapper.handler" ]
+

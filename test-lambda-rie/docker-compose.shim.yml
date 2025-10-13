@@ -1,0 +1,9 @@
+services:
+  lambda-rie-shim:
+    build:
+      context: .
+      dockerfile: Dockerfile.shim
+    ports:
+      - '9001:8080'
+    environment:
+      - NODE_OPTIONS=--require /var/task/init-otel.cjs
