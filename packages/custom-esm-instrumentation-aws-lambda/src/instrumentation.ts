@@ -294,6 +294,9 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
 
     // Set up a fallback interceptor that patches the handler when it's first called
     this._setupFallbackInterceptor(functionName);
+
+    // Set up ESM export interception
+    this._setupESMExportInterceptor(functionName);
   }
 
   /**
@@ -459,6 +462,115 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
         functionName,
       });
     }, 30000);
+  }
+
+  /**
+   * Set up ESM export interception by monitoring module loading
+   */
+  private _setupESMExportInterceptor(functionName: string): void {
+    this._diag.debug('Setting up ESM export interceptor', { functionName });
+
+    // Intercept require.resolve to catch when modules are being resolved
+    const originalResolve = require.resolve;
+    (require.resolve as any) = function (this: any, id: string) {
+      const result = originalResolve.apply(this, arguments as any);
+
+      // Check if this is our handler module being resolved
+      if (id.includes('lambda') || id.endsWith('.mjs')) {
+        const instrumentation = (global as any)
+          .__aws_lambda_esm_instrumentation;
+        if (instrumentation) {
+          instrumentation._diag.debug('Module being resolved', {
+            moduleId: id,
+            resolvedPath: result,
+          });
+
+          // Try to access the module from the cache after a short delay
+          setTimeout(() => {
+            try {
+              const Module = require('module');
+              if (Module._cache && Module._cache[result]) {
+                const moduleExports = Module._cache[result].exports;
+                if (
+                  moduleExports &&
+                  typeof moduleExports[functionName] === 'function'
+                ) {
+                  instrumentation._diag.debug(
+                    'Found handler in resolved module',
+                    {
+                      functionName,
+                      moduleId: id,
+                      resolvedPath: result,
+                    }
+                  );
+
+                  // Patch the handler
+                  const originalHandler = moduleExports[functionName];
+                  const patchedHandler = instrumentation._patchHandler(
+                    originalHandler,
+                    functionName
+                  );
+                  moduleExports[functionName] = patchedHandler;
+
+                  instrumentation._diag.debug(
+                    'Handler patched in resolved module',
+                    {
+                      functionName,
+                      moduleId: id,
+                    }
+                  );
+                }
+              }
+            } catch (error) {
+              instrumentation._diag.debug('Error accessing resolved module', {
+                moduleId: id,
+                error: (error as Error).message,
+              });
+            }
+          }, 10); // Small delay to ensure module is fully loaded
+        }
+      }
+
+      return result;
+    };
+
+    // Also intercept the require function itself
+    const originalRequire = require;
+    (global as any).require = function (id: string) {
+      const result: any = originalRequire.apply(this, arguments as any);
+
+      // Check if this is our handler module being required
+      if (id.includes('lambda') || id.endsWith('.mjs')) {
+        const instrumentation = (global as any)
+          .__aws_lambda_esm_instrumentation;
+        if (
+          instrumentation &&
+          result &&
+          typeof result === 'object' &&
+          typeof (result as any)[functionName] === 'function'
+        ) {
+          instrumentation._diag.debug('Found handler in required module', {
+            functionName,
+            moduleId: id,
+          });
+
+          // Patch the handler
+          const originalHandler = result[functionName];
+          const patchedHandler = instrumentation._patchHandler(
+            originalHandler,
+            functionName
+          );
+          (result as any)[functionName] = patchedHandler;
+
+          instrumentation._diag.debug('Handler patched in required module', {
+            functionName,
+            moduleId: id,
+          });
+        }
+      }
+
+      return result;
+    };
   }
 
   /**
