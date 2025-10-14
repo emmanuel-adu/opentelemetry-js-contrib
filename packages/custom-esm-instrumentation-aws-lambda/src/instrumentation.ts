@@ -128,6 +128,9 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
   private _setupAutomaticHandlerPatching(): void {
     if (this._isInstrumented) return;
 
+    // Store reference globally for ESM interceptors to access
+    (global as any).__aws_lambda_esm_instrumentation = this;
+
     // Patch handlers immediately - no setTimeout needed
     // The instrumentation is loaded before user code, so this is safe
     this._patchSpecificHandler();
@@ -145,19 +148,54 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
 
     this._diag.debug('Attempting to patch specific handler', { functionName });
 
-    // Try to patch the specific handler function
-    // This will work if the handler is already loaded in global scope or module.exports
+    // Try multiple approaches to find and patch the handler
+    let handlerPatched = false;
+
+    // 1. Try global scope
     if (typeof (globalThis as any)[functionName] === 'function') {
       this._patchHandler((globalThis as any)[functionName], functionName);
       this._diag.debug('Patched handler in global scope', { functionName });
-    } else if (
+      handlerPatched = true;
+    }
+
+    // 2. Try CommonJS module.exports
+    if (
+      !handlerPatched &&
       typeof module !== 'undefined' &&
       module.exports &&
       typeof module.exports[functionName] === 'function'
     ) {
       this._patchHandler(module.exports[functionName], functionName);
       this._diag.debug('Patched handler in module.exports', { functionName });
-    } else {
+      handlerPatched = true;
+    }
+
+    // 3. Try ESM module registry (for serverless-esbuild scenarios)
+    if (!handlerPatched) {
+      try {
+        const modulePath = this._getHandlerModulePath();
+        if (modulePath) {
+          const handlerModule = this._getModuleFromRegistry(modulePath);
+          if (
+            handlerModule &&
+            typeof handlerModule[functionName] === 'function'
+          ) {
+            this._patchHandler(handlerModule[functionName], functionName);
+            this._diag.debug('Patched handler from ESM module registry', {
+              functionName,
+              modulePath,
+            });
+            handlerPatched = true;
+          }
+        }
+      } catch (error) {
+        this._diag.debug('Failed to access ESM module registry', {
+          error: (error as Error).message,
+        });
+      }
+    }
+
+    if (!handlerPatched) {
       this._diag.debug('Handler not found yet, will be patched when it loads', {
         functionName,
       });
@@ -235,6 +273,105 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
         },
       });
     }
+
+    // Intercept ESM module loading for serverless-esbuild scenarios
+    this._setupESMInterceptor(
+      functionName,
+      handlerPatched,
+      originalDefineProperty
+    );
+  }
+
+  /**
+   * Set up ESM module loading interception
+   */
+  private _setupESMInterceptor(
+    functionName: string,
+    handlerPatched: boolean,
+    originalDefineProperty: any
+  ): void {
+    // Monitor for ESM module loading by intercepting require/import
+    const originalRequire = require;
+
+    // Wrap require to catch module loading
+    (global as any).require = function (id: string) {
+      const result = originalRequire.apply(this, arguments as any);
+
+      // Check if this is our handler module being loaded
+      if (id.endsWith('.mjs') || id.includes('lambda')) {
+        const instrumentation = (global as any)
+          .__aws_lambda_esm_instrumentation;
+        if (
+          instrumentation &&
+          typeof result === 'object' &&
+          result[functionName]
+        ) {
+          try {
+            const patchedFunction = instrumentation._patchHandler(
+              result[functionName],
+              functionName
+            );
+            (result as any)[functionName] = patchedFunction;
+            instrumentation._diag.debug('Patched ESM handler during require', {
+              functionName,
+              moduleId: id,
+            });
+          } catch (error) {
+            instrumentation._diag.debug(
+              'Failed to patch ESM handler during require',
+              {
+                functionName,
+                moduleId: id,
+                error: (error as Error).message,
+              }
+            );
+          }
+        }
+      }
+
+      return result;
+    };
+
+    // Also try to intercept dynamic imports
+    const originalImport = (global as any).import;
+    if (typeof originalImport === 'function') {
+      (global as any).import = function (id: string) {
+        return originalImport(id).then((module: any) => {
+          // Check if this is our handler module
+          if (id.endsWith('.mjs') || id.includes('lambda')) {
+            const instrumentation = (global as any)
+              .__aws_lambda_esm_instrumentation;
+            if (
+              instrumentation &&
+              typeof module === 'object' &&
+              module[functionName]
+            ) {
+              try {
+                const patchedFunction = instrumentation._patchHandler(
+                  module[functionName],
+                  functionName
+                );
+                module[functionName] = patchedFunction;
+                instrumentation._diag.debug(
+                  'Patched ESM handler during dynamic import',
+                  { functionName, moduleId: id }
+                );
+              } catch (error) {
+                instrumentation._diag.debug(
+                  'Failed to patch ESM handler during dynamic import',
+                  {
+                    functionName,
+                    moduleId: id,
+                    error: (error as Error).message,
+                  }
+                );
+              }
+            }
+          }
+          return module;
+        });
+      };
+    }
   }
 
   /**
@@ -259,6 +396,47 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
     }
 
     return functionName;
+  }
+
+  /**
+   * Get the handler module path from _HANDLER environment variable
+   */
+  private _getHandlerModulePath(): string | null {
+    if (!this._handlerDef) return null;
+
+    const parts = this._handlerDef.split('.');
+    if (parts.length < 2) return null;
+
+    const moduleName = parts.slice(0, -1).join('.');
+    const taskRoot = process.env.LAMBDA_TASK_ROOT || '/var/task';
+    return `${taskRoot}/${moduleName}.mjs`;
+  }
+
+  /**
+   * Try to get module from Node.js module registry
+   */
+  private _getModuleFromRegistry(modulePath: string): any | null {
+    try {
+      // Try to access the module from Node.js internal registry
+      const Module = require('module');
+      if (Module._cache && Module._cache[modulePath]) {
+        return Module._cache[modulePath].exports;
+      }
+
+      // Try require.resolve to find the module
+      const resolvedPath = require.resolve(modulePath);
+      if (Module._cache && Module._cache[resolvedPath]) {
+        return Module._cache[resolvedPath].exports;
+      }
+    } catch (error) {
+      // Module not found or not accessible
+      this._diag.debug('Module not accessible from registry', {
+        modulePath,
+        error: (error as Error).message,
+      });
+    }
+
+    return null;
   }
 
   /**
