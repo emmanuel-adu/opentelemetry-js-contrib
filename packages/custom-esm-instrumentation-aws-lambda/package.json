@@ -1,0 +1,54 @@
+{
+  "name": "@opentelemetry/instrumentation-aws-lambda-esm",
+  "version": "1.0.0",
+  "description": "OpenTelemetry AWS Lambda instrumentation with ESM support for serverless-esbuild",
+  "main": "build/src/index.js",
+  "types": "build/src/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib.git",
+    "directory": "packages/custom-esm-instrumentation-aws-lambda"
+  },
+  "scripts": {
+    "clean": "rm -rf build",
+    "compile": "tsc",
+    "prepack": "npm run compile",
+    "test": "echo \"Tests coming soon\" && exit 0"
+  },
+  "keywords": [
+    "opentelemetry",
+    "aws-lambda",
+    "instrumentation",
+    "esm",
+    "serverless-esbuild",
+    "tracing",
+    "distributed-tracing",
+    "observability"
+  ],
+  "author": "OpenTelemetry Authors",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "build/src/**/*.js",
+    "build/src/**/*.d.ts",
+    "build/src/**/*.js.map",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/instrumentation": "^0.205.0"
+  },
+  "dependencies": {
+    "@opentelemetry/semantic-conventions": "^1.28.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/instrumentation": "^0.205.0",
+    "@types/aws-lambda": "^8.10.138",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

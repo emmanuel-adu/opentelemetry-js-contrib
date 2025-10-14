@@ -1,0 +1,35 @@
+{
+  "name": "lambda-rie-test",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda RIE test with OpenTelemetry instrumentation",
+  "scripts": {
+    "test": "npm run test:full",
+    "test:full": "npm run build && npm run start && sleep 3 && npm run invoke && npm run stop",
+    "test:quick": "npm run invoke",
+    "build": "docker compose build",
+    "start": "docker compose up -d",
+    "stop": "docker compose down",
+    "logs": "docker compose logs -f lambda-rie",
+    "invoke": "curl -s -X POST http://localhost:9000/2015-03-31/functions/function/invocations -d @event.json | jq '.' && npm run check",
+    "check": "docker compose logs lambda-rie | grep -E '(REQUEST HOOK|RESPONSE HOOK|ESM handler successfully patched|spanId)' | tail -10 || echo '⚠️  No trace logs found yet. Try: npm run logs'",
+    "clean": "docker compose down -v && docker system prune -f",
+    "build:custom": "./build-custom-instrumentation.sh && docker compose -f docker-compose.custom.yml build",
+    "test:custom": "npm run build:custom && npm run start:custom && sleep 3 && npm run invoke:custom && npm run stop:custom",
+    "test:custom:quick": "npm run invoke:custom",
+    "start:custom": "docker compose -f docker-compose.custom.yml up -d",
+    "stop:custom": "docker compose -f docker-compose.custom.yml down",
+    "logs:custom": "docker compose -f docker-compose.custom.yml logs -f lambda-rie-custom",
+    "invoke:custom": "curl -s -X POST http://localhost:9001/2015-03-31/functions/function/invocations -d @event.json | jq '.' && npm run check:custom",
+    "check:custom": "docker compose -f docker-compose.custom.yml logs lambda-rie-custom | grep -E '(CUSTOM REQUEST HOOK|CUSTOM RESPONSE HOOK|Handler patched successfully|spanId)' | tail -15 || echo '⚠️  No trace logs found yet. Try: npm run logs:custom'",
+    "clean:custom": "docker compose -f docker-compose.custom.yml down -v"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-node": "^0.205.0",
+    "@opentelemetry/context-async-hooks": "^2.1.0",
+    "@opentelemetry/sdk-trace-base": "^1.28.0",
+    "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0"
+  }
+}

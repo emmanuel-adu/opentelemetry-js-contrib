@@ -1,0 +1,23 @@
+FROM public.ecr.aws/lambda/nodejs:20
+
+# Set working directory first
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# Copy package.json first for better Docker caching
+COPY package.json ${LAMBDA_TASK_ROOT}/
+
+# Install dependencies
+RUN npm install --production
+
+# Copy Lambda handler and instrumentation files
+COPY handler.mjs ${LAMBDA_TASK_ROOT}/
+COPY init-otel-custom.cjs ${LAMBDA_TASK_ROOT}/
+COPY custom-instrumentation-compiled.cjs ${LAMBDA_TASK_ROOT}/
+COPY otel-handler-custom ${LAMBDA_TASK_ROOT}/
+
+# Make wrapper executable
+RUN chmod +x ${LAMBDA_TASK_ROOT}/otel-handler-custom
+
+# Set the CMD to your handler (this will be overridden by docker-compose command)
+CMD [ "handler.handler" ]
+

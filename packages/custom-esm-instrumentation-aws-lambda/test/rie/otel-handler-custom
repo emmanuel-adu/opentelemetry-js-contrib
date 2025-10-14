@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# Lambda Runtime wrapper for Custom OpenTelemetry Instrumentation
+# This script is executed by AWS_LAMBDA_EXEC_WRAPPER
+
+echo "🚀 [otel-handler-custom] Starting Custom OpenTelemetry wrapper..."
+echo "[otel-handler-custom] Handler: $1"
+echo "[otel-handler-custom] Args: ${@:2}"
+
+# Initialize OpenTelemetry with custom instrumentation BEFORE running the Lambda runtime
+exec env NODE_OPTIONS="--require /var/task/init-otel-custom.cjs" "$@"
+

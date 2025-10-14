@@ -42,27 +42,13 @@ import {
   StreamifyHandler,
 } from 'aws-lambda';
 
-// Lambda-specific semantic conventions (inline to avoid import issues)
+import type { AwsLambdaInstrumentationConfig } from './types';
+
+// Lambda-specific semantic conventions
 const ATTR_FAAS_EXECUTION = 'faas.execution';
 const ATTR_FAAS_ID = 'faas.id';
 const ATTR_CLOUD_ACCOUNT_ID = 'cloud.account.id';
 const ATTR_FAAS_COLDSTART = 'faas.coldstart';
-
-// Configuration interface (inline to avoid import issues)
-interface AwsLambdaInstrumentationConfig {
-  lambdaHandler?: string;
-  lambdaStartTime?: number;
-  requestHook?: (span: Span, info: { event: any; context: Context }) => void;
-  responseHook?: (
-    span: Span,
-    info: { err?: Error | string | null; res?: any }
-  ) => void;
-  eventContextExtractor?: EventContextExtractor;
-  enabled?: boolean;
-  version?: string; // Allow custom version
-}
-
-type EventContextExtractor = (event: any, context: Context) => OtelContext;
 
 // Package info (inline to avoid import issues)
 const PACKAGE_NAME = 'custom-aws-lambda-instrumentation';
@@ -190,11 +176,11 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
 
     // Intercept global handler assignments - only for the specific handler function
     const originalDefineProperty = Object.defineProperty;
-    Object.defineProperty = (
-      target: any,
+    (Object.defineProperty as any) = <T>(
+      target: T,
       property: PropertyKey,
       descriptor: PropertyDescriptor
-    ) => {
+    ): T => {
       // Only intercept if we haven't patched yet
       if (
         !handlerPatched &&
@@ -214,7 +200,12 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
           'Handler patched successfully, restored Object.defineProperty'
         );
       }
-      return originalDefineProperty.call(this, target, property, descriptor);
+      return originalDefineProperty.call(
+        this,
+        target,
+        property,
+        descriptor
+      ) as T;
     };
 
     // Intercept module.exports assignments (CommonJS) - only for the specific handler function

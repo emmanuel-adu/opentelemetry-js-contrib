@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  lambda-rie-custom:
+    build:
+      context: .
+      dockerfile: Dockerfile.custom
+    ports:
+      - '9001:8080' # Use different port to avoid conflicts
+    environment:
+      # Lambda environment variables
+      AWS_LAMBDA_FUNCTION_NAME: test-custom-instrumentation
+      AWS_LAMBDA_FUNCTION_VERSION: $LATEST
+      AWS_LAMBDA_FUNCTION_MEMORY_SIZE: 512
+      AWS_LAMBDA_LOG_GROUP_NAME: /aws/lambda/test-custom-instrumentation
+      AWS_LAMBDA_LOG_STREAM_NAME: 2025/10/14/[$LATEST]abcdef1234567890
+      AWS_REGION: us-east-1
+
+      # Handler configuration
+      _HANDLER: handler.handler
+      LAMBDA_TASK_ROOT: /var/task
+
+      # Custom OpenTelemetry wrapper
+      AWS_LAMBDA_EXEC_WRAPPER: /var/task/otel-handler-custom
+
+      # Optional: Additional debug logging
+      NODE_OPTIONS: '' # Will be set by wrapper
+    volumes:
+      - ./handler.mjs:/var/task/handler.mjs:ro
+      - ./init-otel-custom.cjs:/var/task/init-otel-custom.cjs:ro
+      - ./custom-instrumentation-compiled.cjs:/var/task/custom-instrumentation-compiled.cjs:ro
+      - ./otel-handler-custom:/var/task/otel-handler-custom:ro
+    command: handler.handler

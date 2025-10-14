@@ -1,0 +1,8 @@
+node_modules/
+custom-instrumentation.ts
+types.ts
+types.js
+custom-instrumentation-compiled.cjs
+*.log
+.DS_Store
+
