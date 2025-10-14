@@ -10,7 +10,8 @@ Local tests for the custom ESM instrumentation using AWS Lambda Runtime Interfac
 | `build-custom-instrumentation.sh` | Compiles instrumentation to CommonJS |
 | `init-otel-custom.cjs`            | OpenTelemetry initialization         |
 | `otel-handler-custom`             | Docker entrypoint wrapper            |
-| `handler-banner-final.mjs`        | Test Lambda handler (ESM)            |
+| `handler.mjs`                     | Test Lambda handler (ESM)            |
+| `event.json`                      | Sample Lambda event payload          |
 | `docker-compose.custom.yml`       | Docker Compose configuration         |
 | `Dockerfile.custom`               | RIE container definition             |
 | `.gitignore`                      | Ignore build artifacts               |
@@ -89,3 +90,22 @@ npm install ../../opentelemetry-instrumentation-aws-lambda-esm-1.0.0.tgz
 serverless deploy
 serverless invoke -f yourFunction -l
 ```
+
+## Cleanup
+
+After running tests, you may want to clean up artifacts:
+
+```bash
+# Stop containers and remove volumes
+npm run clean:custom
+
+# Also remove Docker images (full cleanup)
+npm run clean:all
+
+# Manual cleanup if needed
+docker compose -f docker-compose.custom.yml down -v
+docker image rm rie_lambda-rie-custom
+rm -f custom-instrumentation-compiled.cjs
+```
+
+**Note:** Build artifacts (`custom-instrumentation-compiled.cjs`, `node_modules/`, `package-lock.json`) are gitignored and recreated on each test run.

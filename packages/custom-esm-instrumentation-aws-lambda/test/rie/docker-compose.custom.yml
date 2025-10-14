@@ -10,10 +10,10 @@ services:
     environment:
       # Lambda environment variables
       AWS_LAMBDA_FUNCTION_NAME: test-custom-instrumentation
-      AWS_LAMBDA_FUNCTION_VERSION: $LATEST
+      AWS_LAMBDA_FUNCTION_VERSION: $$LATEST
       AWS_LAMBDA_FUNCTION_MEMORY_SIZE: 512
       AWS_LAMBDA_LOG_GROUP_NAME: /aws/lambda/test-custom-instrumentation
-      AWS_LAMBDA_LOG_STREAM_NAME: 2025/10/14/[$LATEST]abcdef1234567890
+      AWS_LAMBDA_LOG_STREAM_NAME: 2025/10/14/[$$LATEST]abcdef1234567890
       AWS_REGION: us-east-1
 
       # Handler configuration

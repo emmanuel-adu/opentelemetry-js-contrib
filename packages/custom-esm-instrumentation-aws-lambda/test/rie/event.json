@@ -1,0 +1,4 @@
+{
+  "name": "OpenTelemetry",
+  "message": "Testing custom ESM instrumentation"
+}

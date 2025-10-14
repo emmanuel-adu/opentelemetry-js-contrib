@@ -22,7 +22,8 @@
     "logs:custom": "docker compose -f docker-compose.custom.yml logs -f lambda-rie-custom",
     "invoke:custom": "curl -s -X POST http://localhost:9001/2015-03-31/functions/function/invocations -d @event.json | jq '.' && npm run check:custom",
     "check:custom": "docker compose -f docker-compose.custom.yml logs lambda-rie-custom | grep -E '(CUSTOM REQUEST HOOK|CUSTOM RESPONSE HOOK|Handler patched successfully|spanId)' | tail -15 || echo '⚠️  No trace logs found yet. Try: npm run logs:custom'",
-    "clean:custom": "docker compose -f docker-compose.custom.yml down -v"
+    "clean:custom": "docker compose -f docker-compose.custom.yml down -v && rm -f custom-instrumentation-compiled.cjs custom-instrumentation.ts types.ts types.js",
+    "clean:all": "npm run clean:custom && docker image rm rie_lambda-rie-custom 2>/dev/null || true"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
