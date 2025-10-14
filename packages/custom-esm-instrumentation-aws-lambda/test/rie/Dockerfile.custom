@@ -6,11 +6,11 @@ WORKDIR ${LAMBDA_TASK_ROOT}
 # Copy package.json first for better Docker caching
 COPY package.json ${LAMBDA_TASK_ROOT}/
 
-# Install dependencies (use --insecure to bypass SSL issues in Docker)
-# --production installs packages listed in dependencies section of package.json (required for runtime)
+# Install dependencies (use --omit=dev instead of deprecated --production, --insecure to bypass SSL issues in Docker)
+# --omit=dev installs packages listed in dependencies section of package.json (required for runtime)
 # skips devDependencies and other optional packages
 # --insecure bypasses SSL issues in Docker this is okay for local development
-RUN npm install --production --insecure
+RUN npm install --omit=dev --insecure
 
 # Copy Lambda handler and instrumentation files
 COPY handler.mjs ${LAMBDA_TASK_ROOT}/
