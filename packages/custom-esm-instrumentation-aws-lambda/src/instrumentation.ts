@@ -209,6 +209,8 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
     const functionName = this._getHandlerFunctionName();
     if (!functionName) return;
 
+    this._diag.debug('Setting up handler interceptor', { functionName });
+
     // Track whether we've successfully patched the handler
     let handlerPatched = false;
 
@@ -219,6 +221,12 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
       property: PropertyKey,
       descriptor: PropertyDescriptor
     ): T => {
+      this._diag.debug('Object.defineProperty intercepted', {
+        property: String(property),
+        hasValue: !!descriptor.value,
+        isFunction: typeof descriptor.value === 'function',
+      });
+
       // Only intercept if we haven't patched yet
       if (
         !handlerPatched &&
@@ -226,6 +234,9 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
         String(property) === functionName &&
         this._isHandlerFunction(descriptor.value)
       ) {
+        this._diag.debug('Patching handler via Object.defineProperty', {
+          functionName,
+        });
         descriptor.value = this._patchHandler(
           descriptor.value,
           String(property)
@@ -235,7 +246,7 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
         // Restore original Object.defineProperty after successful patch
         Object.defineProperty = originalDefineProperty;
         this._diag.debug(
-          'Handler patched successfully, restored Object.defineProperty'
+          'Handler patched successfully via Object.defineProperty, restored original'
         );
       }
       return originalDefineProperty.call(
@@ -280,6 +291,9 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
       handlerPatched,
       originalDefineProperty
     );
+
+    // Set up a fallback interceptor that patches the handler when it's first called
+    this._setupFallbackInterceptor(functionName);
   }
 
   /**
@@ -372,6 +386,79 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
         });
       };
     }
+  }
+
+  /**
+   * Set up a fallback interceptor that patches the handler when it's first called
+   */
+  private _setupFallbackInterceptor(functionName: string): void {
+    this._diag.debug('Setting up fallback interceptor', { functionName });
+
+    // Set up a timer to periodically check for the handler
+    const checkInterval = setInterval(() => {
+      try {
+        // Try to find the handler in various locations
+        const handlerModulePath = this._getHandlerModulePath();
+        if (handlerModulePath) {
+          const handlerModule = this._getModuleFromRegistry(handlerModulePath);
+          if (
+            handlerModule &&
+            typeof handlerModule[functionName] === 'function'
+          ) {
+            this._diag.debug('Found handler via fallback interceptor', {
+              functionName,
+            });
+
+            // Patch the handler
+            const originalHandler = handlerModule[functionName];
+            const patchedHandler = this._patchHandler(
+              originalHandler,
+              functionName
+            );
+            handlerModule[functionName] = patchedHandler;
+
+            this._diag.debug('Handler patched via fallback interceptor', {
+              functionName,
+            });
+            clearInterval(checkInterval);
+          }
+        }
+
+        // Also try global scope
+        if (typeof (globalThis as any)[functionName] === 'function') {
+          this._diag.debug(
+            'Found handler in global scope via fallback interceptor',
+            { functionName }
+          );
+
+          const originalHandler = (globalThis as any)[functionName];
+          const patchedHandler = this._patchHandler(
+            originalHandler,
+            functionName
+          );
+          (globalThis as any)[functionName] = patchedHandler;
+
+          this._diag.debug(
+            'Handler patched in global scope via fallback interceptor',
+            { functionName }
+          );
+          clearInterval(checkInterval);
+        }
+      } catch (error) {
+        this._diag.debug('Fallback interceptor error', {
+          functionName,
+          error: (error as Error).message,
+        });
+      }
+    }, 100); // Check every 100ms
+
+    // Clear the interval after 30 seconds to avoid infinite checking
+    setTimeout(() => {
+      clearInterval(checkInterval);
+      this._diag.debug('Fallback interceptor timeout, stopped checking', {
+        functionName,
+      });
+    }, 30000);
   }
 
   /**
