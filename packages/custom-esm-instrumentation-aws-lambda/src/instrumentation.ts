@@ -131,12 +131,154 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
     // Store reference globally for ESM interceptors to access
     (global as any).__aws_lambda_esm_instrumentation = this;
 
-    // Patch handlers immediately - no setTimeout needed
-    // The instrumentation is loaded before user code, so this is safe
-    this._patchSpecificHandler();
-    this._setupHandlerInterceptor();
+    // Check if we're in an ESM environment
+    if (this._isESMEnvironment()) {
+      this._diag.debug('ESM environment detected');
+      this._setupESMSpecificPatching();
+    } else {
+      this._diag.debug('CommonJS environment detected');
+      // Patch handlers immediately - no setTimeout needed
+      // The instrumentation is loaded before user code, so this is safe
+      this._patchSpecificHandler();
+      this._setupHandlerInterceptor();
+    }
 
     this._isInstrumented = true;
+  }
+
+  /**
+   * Check if we're in an ESM environment
+   */
+  private _isESMEnvironment(): boolean {
+    // Check if we're using ESM loader
+    if (
+      process.env.NODE_OPTIONS &&
+      process.env.NODE_OPTIONS.includes('--experimental-loader')
+    ) {
+      return true;
+    }
+
+    // Check if we have .mjs files in the task directory
+    try {
+      const fs = require('fs');
+      const taskRoot = process.env.LAMBDA_TASK_ROOT || '/var/task';
+      const files = fs.readdirSync(taskRoot);
+      if (files.some((file: string) => file.endsWith('.mjs'))) {
+        return true;
+      }
+    } catch (error) {
+      this._diag.debug('Could not check task directory for .mjs files', {
+        error: (error as Error).message,
+      });
+    }
+
+    // Check package.json for "type": "module"
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const taskRoot = process.env.LAMBDA_TASK_ROOT || '/var/task';
+      const packageJsonPath = path.join(taskRoot, 'package.json');
+      if (fs.existsSync(packageJsonPath)) {
+        const packageJson = JSON.parse(
+          fs.readFileSync(packageJsonPath, 'utf8')
+        );
+        if (packageJson.type === 'module') {
+          return true;
+        }
+      }
+    } catch (error) {
+      this._diag.debug('Could not check package.json for ESM type', {
+        error: (error as Error).message,
+      });
+    }
+
+    return false;
+  }
+
+  /**
+   * Set up ESM-specific patching using import-in-the-middle approach
+   */
+  private _setupESMSpecificPatching(): void {
+    const functionName = this._getHandlerFunctionName();
+    if (!functionName) return;
+
+    this._diag.debug('Setting up ESM patching', { functionName });
+
+    // Try to use import-in-the-middle if available
+    try {
+      // Check if import-in-the-middle is available
+      const importInTheMiddle = require('import-in-the-middle');
+      if (importInTheMiddle && typeof importInTheMiddle.hook === 'function') {
+        this._diag.debug('Using import-in-the-middle for ESM patching', {
+          functionName,
+        });
+
+        // Hook into ESM imports
+        importInTheMiddle.hook(
+          (name: string, resolve: any, getSource: any, getFormat: any) => {
+            this._diag.debug('ESM module being imported', { moduleName: name });
+
+            // Check if this is our handler module
+            if (name.includes('lambda') || name.endsWith('.mjs')) {
+              this._diag.debug('Handler module detected in ESM import', {
+                moduleName: name,
+              });
+
+              // Get the module source and modify it
+              const source = getSource();
+              if (source && source.includes(`export.*${functionName}`)) {
+                this._diag.debug('Found handler export in ESM module', {
+                  moduleName: name,
+                  functionName,
+                });
+
+                // We need to patch the handler when the module is loaded
+                // This is a simplified approach - in reality, we'd need to modify the source
+                setTimeout(() => {
+                  try {
+                    // Try to find and patch the handler after module loads
+                    const handlerModule = this._getModuleFromRegistry(name);
+                    if (
+                      handlerModule &&
+                      typeof handlerModule[functionName] === 'function'
+                    ) {
+                      const patchedHandler = this._patchHandler(
+                        handlerModule[functionName],
+                        functionName
+                      );
+                      handlerModule[functionName] = patchedHandler;
+                      this._diag.debug('Handler patched in ESM module', {
+                        moduleName: name,
+                        functionName,
+                      });
+                    }
+                  } catch (error) {
+                    this._diag.debug('Failed to patch ESM handler', {
+                      error: (error as Error).message,
+                    });
+                  }
+                }, 10);
+              }
+            }
+
+            return resolve(name);
+          }
+        );
+
+        return;
+      }
+    } catch (error) {
+      this._diag.debug(
+        'import-in-the-middle not available, falling back to alternative approach',
+        {
+          error: (error as Error).message,
+        }
+      );
+    }
+
+    // Fallback: Use the direct handler interceptor approach
+    this._diag.debug('Using fallback ESM patching', { functionName });
+    this._setupDirectHandlerInterceptor(functionName);
   }
 
   /**
@@ -297,6 +439,9 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
 
     // Set up ESM export interception
     this._setupESMExportInterceptor(functionName);
+
+    // Set up direct handler execution interception
+    this._setupDirectHandlerInterceptor(functionName);
   }
 
   /**
@@ -570,6 +715,148 @@ export class CustomAwsLambdaInstrumentation extends InstrumentationBase<AwsLambd
       }
 
       return result;
+    };
+  }
+
+  /**
+   * Set up direct handler execution interception by monitoring the Lambda runtime
+   */
+  private _setupDirectHandlerInterceptor(functionName: string): void {
+    this._diag.debug('Setting up direct handler execution interceptor', {
+      functionName,
+    });
+
+    // Monitor for the handler being called directly by the Lambda runtime
+    // This approach intercepts the actual function call
+
+    // Store the original handler if it exists in global scope
+    const originalHandler = (globalThis as any)[functionName];
+    if (typeof originalHandler === 'function') {
+      this._diag.debug('Found handler in global scope, patching directly', {
+        functionName,
+      });
+      const patchedHandler = this._patchHandler(originalHandler, functionName);
+      (globalThis as any)[functionName] = patchedHandler;
+      return;
+    }
+
+    // If not in global scope, set up a proxy that will catch when it's assigned
+    let handlerPatched = false;
+
+    // Use a more aggressive approach - monitor all property assignments on globalThis
+    // Intercept all property assignments on globalThis
+    const globalProxy = new Proxy(globalThis as any, {
+      set: (target: any, property: string | symbol, value: any) => {
+        if (
+          !handlerPatched &&
+          String(property) === functionName &&
+          typeof value === 'function' &&
+          this._isHandlerFunction(value)
+        ) {
+          this._diag.debug(
+            'Handler assigned to global scope, patching immediately',
+            {
+              functionName,
+              property: String(property),
+            }
+          );
+
+          const patchedHandler = this._patchHandler(value, String(property));
+          handlerPatched = true;
+
+          // Set the patched handler
+          target[property] = patchedHandler;
+          return true;
+        }
+
+        // For all other properties, set normally
+        target[property] = value;
+        return true;
+      },
+      get: (target: any, property: string | symbol) => {
+        return target[property];
+      },
+    });
+
+    // Replace globalThis with our proxy
+    (global as any).globalThis = globalProxy;
+
+    // Also try to intercept the handler when it's called by the Lambda runtime
+    // This is a last resort approach
+    const originalCall = Function.prototype.call;
+    const originalApply = Function.prototype.apply;
+
+    Function.prototype.call = function (this: any, ...args: any[]) {
+      if (
+        !handlerPatched &&
+        this &&
+        this.name === functionName &&
+        this.length >= 2 &&
+        args.length >= 2
+      ) {
+        const instrumentation = (global as any)
+          .__aws_lambda_esm_instrumentation;
+        if (instrumentation) {
+          instrumentation._diag.debug(
+            'Handler function called, patching on first call',
+            {
+              functionName,
+              argsLength: args.length,
+            }
+          );
+
+          const patchedHandler = instrumentation._patchHandler(
+            this,
+            functionName
+          );
+          handlerPatched = true;
+
+          // Restore original methods
+          Function.prototype.call = originalCall;
+          Function.prototype.apply = originalApply;
+
+          return patchedHandler.call(this, ...args);
+        }
+      }
+
+      return originalCall.apply(this, args as any);
+    };
+
+    Function.prototype.apply = function (this: any, thisArg: any, args: any[]) {
+      if (
+        !handlerPatched &&
+        this &&
+        this.name === functionName &&
+        this.length >= 2 &&
+        args &&
+        args.length >= 2
+      ) {
+        const instrumentation = (global as any)
+          .__aws_lambda_esm_instrumentation;
+        if (instrumentation) {
+          instrumentation._diag.debug(
+            'Handler function applied, patching on first call',
+            {
+              functionName,
+              argsLength: args.length,
+            }
+          );
+
+          const patchedHandler = instrumentation._patchHandler(
+            this,
+            functionName
+          );
+          handlerPatched = true;
+
+          // Restore original methods
+          Function.prototype.call = originalCall;
+          Function.prototype.apply = originalApply;
+
+          return patchedHandler.apply(thisArg, args);
+        }
+      }
+
+      return originalApply.apply(this, [thisArg, args]);
     };
   }
 

@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Custom ESM Lambda Handler Wrapper
+# This script mimics the ADOT otel-handler approach
+
+# Find the setup script
+if [ -f "/opt/setup-esm-instrumentation.sh" ]; then
+    SETUP_SCRIPT="/opt/setup-esm-instrumentation.sh"
+elif [ -f "/var/task/setup-esm-instrumentation.sh" ]; then
+    SETUP_SCRIPT="/var/task/setup-esm-instrumentation.sh"
+else
+    echo "[otel-handler-custom-esm] ERROR: Cannot find setup-esm-instrumentation.sh" >&2
+    exit 1
+fi
+
+# Source the ESM setup script
+source "$SETUP_SCRIPT"
+
+# Execute the original Lambda runtime command
+exec "$@"

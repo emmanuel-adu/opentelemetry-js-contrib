@@ -1,4 +1,10 @@
 {
-  "name": "OpenTelemetry",
-  "message": "Testing custom ESM instrumentation"
+  "httpMethod": "GET",
+  "path": "/test",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "queryStringParameters": null,
+  "body": null,
+  "isBase64Encoded": false
 }

@@ -1,0 +1,35 @@
+services:
+  lambda-rie-esm:
+    build:
+      context: .
+      dockerfile: Dockerfile.esm
+    ports:
+      - '9002:8080' # Use different port to avoid conflicts
+    environment:
+      # Lambda environment variables
+      AWS_LAMBDA_FUNCTION_NAME: test-esm-instrumentation
+      AWS_LAMBDA_FUNCTION_VERSION: $$LATEST
+      AWS_LAMBDA_FUNCTION_MEMORY_SIZE: 512
+      AWS_LAMBDA_LOG_GROUP_NAME: /aws/lambda/test-esm-instrumentation
+      AWS_LAMBDA_LOG_STREAM_NAME: 2025/10/14/[$$LATEST]abcdef1234567890
+      AWS_REGION: us-east-1
+
+      # Handler configuration
+      _HANDLER: handler.handler
+      LAMBDA_TASK_ROOT: /var/task
+
+      # Custom OpenTelemetry wrapper for ESM
+      AWS_LAMBDA_EXEC_WRAPPER: /var/task/otel-handler-custom-esm
+
+      # Optional: Additional debug logging
+      NODE_OPTIONS: '' # Will be set by wrapper
+    volumes:
+      - ./handler.mjs:/var/task/handler.mjs:ro
+      - ./package.json:/var/task/package.json:ro
+      - ./custom-instrumentation-compiled.cjs:/var/task/custom-instrumentation-compiled.cjs:ro
+      - ./custom-esm-loader.mjs:/var/task/custom-esm-loader.mjs:ro
+      - ./custom-esm-wrapper.mjs:/var/task/custom-esm-wrapper.mjs:ro
+      - ./setup-esm-instrumentation.sh:/var/task/setup-esm-instrumentation.sh:ro
+      - ./custom-instrumentation-setup.js:/var/task/custom-instrumentation-setup.js:ro
+      - ./otel-handler-custom-esm:/var/task/otel-handler-custom-esm:ro
+    command: handler.handler

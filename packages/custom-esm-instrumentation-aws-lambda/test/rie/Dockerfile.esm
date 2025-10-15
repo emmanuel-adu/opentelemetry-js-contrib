@@ -1,0 +1,38 @@
+# Dockerfile for ESM instrumentation RIE test
+FROM public.ecr.aws/lambda/nodejs:20
+
+# Set working directory
+WORKDIR /var/task
+
+# Copy package.json first for better caching
+COPY package.json /var/task/
+
+# Install dependencies (including OpenTelemetry core packages and import-in-the-middle for ESM)
+RUN npm install --omit=dev --insecure \
+    @opentelemetry/api \
+    @opentelemetry/instrumentation \
+    @opentelemetry/semantic-conventions \
+    @opentelemetry/core \
+    @opentelemetry/sdk-trace-base \
+    @opentelemetry/resources \
+    import-in-the-middle
+
+# Copy the compiled instrumentation
+COPY custom-instrumentation-compiled.cjs /var/task/
+
+# Copy ESM files
+COPY custom-esm-loader.mjs /var/task/
+COPY custom-esm-wrapper.mjs /var/task/
+COPY setup-esm-instrumentation.sh /var/task/
+COPY custom-instrumentation-setup.js /var/task/
+COPY otel-handler-custom-esm /var/task/
+
+# Copy the handler
+COPY handler.mjs /var/task/
+
+# Make scripts executable
+RUN chmod +x /var/task/otel-handler-custom-esm && \
+    chmod +x /var/task/setup-esm-instrumentation.sh
+
+# The handler is specified in docker-compose.yml
+CMD ["handler.handler"]
