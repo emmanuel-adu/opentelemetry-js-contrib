@@ -101,67 +101,13 @@ packages/custom-esm-instrumentation-aws-lambda/
 
 ```yaml
 # serverless.yml
-custom:
-  environment:
-    lambda:
-      environmentVariables:
-        <<: *baseEnvVars
-        <<: *baseVaultEnvVars
-        <<: *baseTvmEnvVars
-        <<: *baseOtelVars
-        # Override for your function
-        OTEL_SERVICE_NAME: slingshot-qa-api
-        # Add the custom wrapper
-        AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler-custom-esm
-        # Your existing variables
-        VAULT_AUTH_ROLE: 38a1ea67-8eb4-4590-ac0b-d524fe97e2de
-        TVM_IAM_ROLE: !GetAtt TvmIamRole.Arn
-        ACTUAL_HANDLER: Lambda.handler
-
 functions:
-  api:
-    handler: lambda.handler  # Your ESM handler
-    name: ${self:custom.lambdaName}
-    description: Lambda that serves the backend - ${self:custom.applicationVersion}
-    role: ${self:custom.environment.lambda.iamRole}
-    timeout: 90
-    memorySize: 2048
-
     # Add the custom instrumentation layer
     layers:
       - ${self:custom.environment.lambda.layers[0]}  # Your existing layers
       - ${self:custom.environment.lambda.layers[1]}  # Your existing layers
       - ${self:custom.environment.lambda.layers[2]}  # Your existing layers
       - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:custom-esm-instrumentation:1  # Add this layer
-
-    environment:
-      <<: *baseEnvVars
-      <<: *baseVaultEnvVars
-      <<: *baseTvmEnvVars
-      <<: *baseOtelVars
-      # Function-specific overrides
-      OTEL_SERVICE_NAME: slingshot-qa-api
-      AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler-custom-esm
-      VAULT_AUTH_ROLE: 38a1ea67-8eb4-4590-ac0b-d524fe97e2de
-      TVM_IAM_ROLE: !GetAtt TvmIamRole.Arn
-      ACTUAL_HANDLER: Lambda.handler
-
-    events:
-      - http:
-          method: any
-          path: /slingshot-api/{proxy+}
-          authorizer:
-            arn: ${self:custom.environment.lambda.authorizerArn}
-            identitySource: method.request.header.Auth
-            resultTtlInSeconds: 0
-            type: token
-
-    package:
-      patterns:
-        - '!global-bundle.pem'
-        - '!capital-one-root.pem'
-        - '../api/graphql/**'
-        - '../api/domains/configurable-dashboards/definitions/**'
 ```
 
 **Important Notes:**

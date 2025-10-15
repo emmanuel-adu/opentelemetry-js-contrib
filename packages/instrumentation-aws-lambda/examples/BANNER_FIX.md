@@ -19,7 +19,7 @@ ReferenceError: __dirname is not defined in ES module scope
 The errors occur because:
 
 1. **Export in conditional block**: The original banner had the `export` statement inside an `if` block, which violates ESM syntax rules
-2. **Missing CommonJS globals**: Some packages (like `@slingshot/api`) expect CommonJS globals like `__dirname` and `__filename` to be available in ESM context
+2. **Missing CommonJS globals**: Some packages, expect CommonJS globals like `__dirname` and `__filename` to be available in ESM context
 
 ```javascript
 // ❌ WRONG - This causes the error
