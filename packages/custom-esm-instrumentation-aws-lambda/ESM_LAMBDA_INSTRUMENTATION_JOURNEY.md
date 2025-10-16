@@ -496,7 +496,7 @@ return [
 
 ## 4. Solutions
 
-We tried **5 different approaches**. Here's what worked and what didn't:
+We tried **6 different approaches**. Here's what worked and what didn't:
 
 ---
 
@@ -753,7 +753,162 @@ Runtime:
 
 ---
 
-### ❌ Solution 3: Custom Runtime Patching
+### ⚠️ Solution 3: CommonJS Shim Wrapper
+
+**Approach:** Create a CommonJS wrapper that imports the ESM handler, allowing OTEL to patch the wrapper.
+
+#### The Strategy
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│                                                            │
+│              CJS Shim Wrapper Flow                         │
+│                                                            │
+│  ┌──────────────────────────────────────────────┐         │
+│  │  1. Lambda loads shim-wrapper.cjs            │         │
+│  │     (CommonJS file)                          │         │
+│  └────────────┬─────────────────────────────────┘         │
+│               │                                            │
+│               ▼                                            │
+│  ┌──────────────────────────────────────────────┐         │
+│  │  2. OTEL hooks into require()                │         │
+│  │     ✅ Patches shim-wrapper.handler          │         │
+│  │     (Because it's CommonJS!)                 │         │
+│  └────────────┬─────────────────────────────────┘         │
+│               │                                            │
+│               ▼                                            │
+│  ┌──────────────────────────────────────────────┐         │
+│  │  3. Shim wrapper invoked                     │         │
+│  │     ✅ OTEL tracing wrapper active!          │         │
+│  └────────────┬─────────────────────────────────┘         │
+│               │                                            │
+│               ▼                                            │
+│  ┌──────────────────────────────────────────────┐         │
+│  │  4. Shim imports ESM handler                 │         │
+│  │     const esm = await import('./handler.mjs')│         │
+│  └────────────┬─────────────────────────────────┘         │
+│               │                                            │
+│               ▼                                            │
+│  ┌──────────────────────────────────────────────┐         │
+│  │  5. Shim calls ESM handler                   │         │
+│  │     return await esmHandler(event, context)  │         │
+│  │     ✅ All within OTEL trace span!           │         │
+│  └──────────────────────────────────────────────┘         │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+```
+
+**File Structure:**
+
+```text
+your-lambda/
+├── shim-wrapper.cjs    ← CommonJS wrapper (OTEL patches this)
+├── handler.mjs         ← Your ESM handler (unchanged)
+├── package.json
+└── serverless.yml      ← Points to shim, not handler!
+```
+
+**Step 1: Create the Shim Wrapper**
+
+```javascript
+// shim-wrapper.cjs (NEW FILE - CommonJS)
+module.exports.handler = async function shimHandler(event, context) {
+  // This wrapper is CommonJS, so OTEL can patch it!
+  // Import the actual ESM handler at runtime
+  const esmModule = await import('./handler.mjs');
+
+  // Call the ESM handler - everything happens within OTEL's trace!
+  return await esmModule.handler(event, context);
+};
+```
+
+**Step 2: Your Handler (No Changes)**
+
+```javascript
+// handler.mjs (UNCHANGED - pure ESM)
+export const handler = async (event, context) => {
+  // Your business logic - no modifications needed!
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: 'Success' }),
+  };
+};
+```
+
+**Step 3: Configure Lambda to Use Shim**
+
+```yaml
+# serverless.yml - Point to shim instead of handler
+functions:
+  myFunction:
+    # ⭐ CRITICAL: Point to shim-wrapper, NOT handler
+    handler: shim-wrapper.handler # ← Changed from "handler.handler"
+```
+
+**The Magic:**
+
+```text
+_HANDLER=shim-wrapper.handler
+    ↓
+Lambda loads shim-wrapper.cjs (CommonJS)
+    ↓
+✅ OTEL patches it (because it's CommonJS)
+    ↓
+Shim imports handler.mjs dynamically
+    ↓
+✅ ESM handler runs within OTEL trace
+```
+
+**The Deployment Blocker:**
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                                                        │
+│         Why It Failed in Production                    │
+│                                                        │
+│  ┌──────────────────────────────────────────┐         │
+│  │  Our Build Pipeline                      │         │
+│  │                                          │         │
+│  │  serverless-esbuild:                     │         │
+│  │  ├─ Configured for ESM (type: "module") │         │
+│  │  ├─ Bundles .mjs files                  │         │
+│  │  └─ ❌ Cannot bundle .cjs files!        │         │
+│  │                                          │         │
+│  │  Error: Cannot use .cjs with ESM mode   │         │
+│  └──────────────────────────────────────────┘         │
+│                                                        │
+│  Our esbuild config requires ESM format,              │
+│  but the shim MUST be CommonJS for OTEL to work.     │
+│                                                        │
+│  Incompatibility: ESM bundler ≠ CJS shim             │
+│                                                        │
+└────────────────────────────────────────────────────────┘
+```
+
+**Result:**
+
+- ✅ **Works perfectly in RIE** - Full instrumentation
+- ✅ **No handler changes** - ESM handler stays pure
+- ✅ **Clean separation** - Shim handles instrumentation
+- ❌ **Can't deploy** - Incompatible with our esbuild ESM configuration
+- ❌ **Build pipeline conflict** - Would need to support both ESM and CJS
+
+```text
+┌────────────────────────────────────────────────────────┐
+│  Pros                  │  Cons                         │
+├────────────────────────┼───────────────────────────────┤
+│  ✓ Works in RIE        │  ✗ Incompatible with esbuild  │
+│  ✓ No handler changes  │  ✗ Can't use ESM bundler      │
+│  ✓ Clean architecture  │  ✗ Production deployment fails│
+│  ✓ Full instrumentation│  ✗ Build pipeline blocker     │
+└────────────────────────┴───────────────────────────────┘
+```
+
+**Verdict:** ⚠️ **Works in testing but blocked by build pipeline requirements**
+
+---
+
+### ❌ Solution 4: Custom Runtime Patching
 
 **Approach:** Create a custom OpenTelemetry instrumentation package that attempts to patch handlers at runtime using various interception strategies.
 
@@ -836,7 +991,7 @@ ESM handlers are:
 
 ---
 
-### ⚠️ Solution 4: Building Official ADOT Lambda Layer
+### ⚠️ Solution 5: Building Official ADOT Lambda Layer
 
 **Approach:** Use AWS's official OpenTelemetry distribution (ADOT) as a Lambda Layer.
 
@@ -902,7 +1057,7 @@ export AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler
 
 ---
 
-### ⚠️ Solution 5: ADOT-Style Custom Implementation
+### ⚠️ Solution 6: ADOT-Style Custom Implementation
 
 **Approach:** Reverse-engineer ADOT's structure and use `import-in-the-middle` to intercept ESM imports.
 
@@ -1114,11 +1269,16 @@ The logs showed that no matter what hook we tried, ESM handlers **never appeared
 ├────────────────┼──────┼─────────┼───────────┼────────────┤
 │ 1. Manual      │  ✅  │ Low     │ ❌ No     │ ❌ No      │
 │ 2. esbuild     │  ✅  │ Medium  │ ✅ Yes    │ ✅ YES     │
-│ 3. Custom      │  ❌  │ High    │ N/A       │ ❌ No      │
-│ 4. ADOT Layer  │  ⚠️  │ Low     │ ✅ Yes    │ ⚠️ Future  │
-│ 5. ADOT-style  │  ⚠️  │ High    │ ⚠️ Maybe  │ ❌ No      │
+│ 3. CJS Shim    │  ✅* │ Medium  │ ✅ Yes    │ ⚠️ Build   │
+│                │ RIE  │         │           │   Conflict │
+│ 4. Custom      │  ❌  │ High    │ N/A       │ ❌ No      │
+│    Runtime     │      │         │           │            │
+│ 5. ADOT Layer  │  ⚠️  │ Low     │ ✅ Yes    │ ⚠️ Future  │
+│ 6. ADOT-style  │  ⚠️  │ High    │ ⚠️ Maybe  │ ❌ No      │
 │    Custom      │      │         │           │            │
 └────────────────┴──────┴─────────┴───────────┴────────────┘
+
+* CJS Shim works in RIE but incompatible with ESM esbuild pipeline
 ```
 
 ### 🎯 RECOMMENDED: esbuild Banner Approach
@@ -1210,6 +1370,7 @@ export const handler = globalThis.__patchESMHandler
    - Track issue: <https://github.com/open-telemetry/opentelemetry-js-contrib/issues>
 
 3. **Node.js ESM Improvements** - Better hooks for module interception
+
    - As Node.js matures its ESM support, more solutions may become possible
 
 4. **OTEL Open source community** - Share findings with wider OTEL community. Can hopefully garner assistance from OTEL and NODE SME on best approach.
@@ -1217,26 +1378,29 @@ export const handler = globalThis.__patchESMHandler
 ### 💡 Key Takeaways
 
 ```text
-┌────────────────────────────────────────────────────────┐
-│                                                        │
-│  What We Learned About ESM + Lambda + OTEL            │
-│                                                        │
-│  1. ESM ≠ CommonJS                                    │
-│     Different loading, timing, and mutability         │
-│                                                        │
-│  2. Lambda Runtime Matters                            │
-│     It loads modules in ways that bypass normal hooks │
-│                                                        │
-│  3. Build-Time > Run-Time                             │
-│     For ESM, inject at build time, patch from inside  │
-│                                                        │
-│  4. InstrumentationNodeModuleDefinition               │
-│     Only works with require(), not import()           │
-│                                                        │
-│  5. RIE Saves Time                                    │
-│     Local testing is essential for this complexity    │
-│                                                        │
-└────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                                                            │
+│  What We Learned About ESM + Lambda + OTEL                │
+│                                                            │
+│  1. ESM ≠ CommonJS                                        │
+│     Different loading, timing, and mutability             │
+│                                                            │
+│  2. Lambda Runtime Matters                                │
+│     It loads modules via import() that bypass our hooks   │
+│                                                            │
+│  3. Build-Time > Run-Time                                 │
+│     For ESM, inject at build time, patch from inside      │
+│                                                            │
+│  4. InstrumentationNodeModuleDefinition                   │
+│     Only works with require(), not import()               │
+│                                                            │
+│  5. CJS Shim Works (in RIE)                               │
+│     But may be blocked by build pipeline constraints      │
+│                                                            │
+│  6. RIE is Essential                                      │
+│     Local testing saves countless hours and dollars       │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ---
